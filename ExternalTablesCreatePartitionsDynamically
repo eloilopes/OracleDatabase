@@ -1,0 +1,81 @@
+declare
+v_File varchar2(250) := 'https://objectstorage.eu-frankfurt-1.oraclecloud.com/<your file>';
+v_Sql varchar2(4000);
+v_Currency varchar2(4) :=0;
+v_Year varchar2(4) :=0;
+v_add_existing_subpartitions varchar2(40);
+--check new values for currency
+cursor cur_currency is Select distinct currency from <YOUR_TABLE_NAME>;
+minus
+--partition name has the currency, so we just pick what we want to compare -- Example partition_name pEGP
+Select  substr(partition_name,2,3) partition_name from all_tab_partitions where TABLE_NAME ='<YOUR_TABLE_NAME>';
+
+--check new values for year
+cursor cur_year is Select distinct year, currency from <YOUR_TABLE_NAME>;
+minus
+--subpartition name has year, so we just pick what we want to compare -- Example subpartition_name subpartEGP2017
+Select to_number(substr(subpartition_name,11,4)) as subpartition_name, (substr(subpartition_name,8,3)) currency  from ALL_TAB_SUBPARTITIONS where TABLE_NAME ='<YOUR_TABLE_NAME>';
+
+cursor newSubPart is Select distinct to_number(substr(subpartition_name,11,4)) year 
+                from ALL_TAB_SUBPARTITIONS where TABLE_NAME ='<YOUR_TABLE_NAME>';
+                
+v_partition cur_currency%rowtype ;
+v_subpartition cur_year%rowtype ;
+
+begin
+    --open cursor to see if there is new partitions/subpartitions
+    begin
+    
+     for v_subpartition in cur_year
+        loop  
+        v_Year := cur_year%ROWCOUNT;
+        end loop;
+        
+        for v_partition in cur_currency
+        loop  
+        v_Currency := cur_currency%ROWCOUNT;
+
+        end loop;
+    end;
+
+if v_Currency = 0 and v_Year = 0 then -- no changes
+    return;
+ -- If we have new partiton and subpartition
+elsif v_Currency <> 0 and v_Year <> 0 then
+    for v_partition in cur_currency
+    loop
+        for v_subpartition in cur_year
+        loop
+            v_Sql := 'ALTER TABLE <YOUR_TABLE_NAME> ADD PARTITION p'|| v_partition.currency ||' VALUES ('''|| v_partition.currency || ''') 
+            (SUBPARTITION subpart' || v_partition.currency || v_subpartition.year ||' VALUES ('|| v_subpartition.year ||') location ('''||v_File ||'''))';
+
+            EXECUTE immediate (v_Sql); 
+        end loop;
+    end loop;
+
+elsif v_Currency <> 0 then -- if there is a new partition only
+    for v_partition in cur_currency
+            loop
+                for v_subpartition in newSubPart
+                loop
+                    v_Sql := 'ALTER TABLE <YOUR_TABLE_NAME> ADD PARTITION ' || 'p'|| v_partition.currency || ' VALUES ('''|| v_partition.currency || ''') 
+                     (SUBPARTITION subpart' || v_partition.currency ||
+                    v_subpartition.year ||' VALUES (' || v_subpartition.year || ') location ('''||v_File ||'''))';
+
+					EXECUTE immediate (v_Sql); 
+                end loop;
+            end loop;
+
+elsif v_Currency = 0 THEN -- if we don't have any new partition, let's check if we have new subpartitions
+    if v_Year <> 0 THEN -- if we have new subpartitions
+        for v_subpartition in cur_year
+            loop
+                v_Sql := 'ALTER TABLE <YOUR_TABLE_NAME> MODIFY PARTITION ' || 'p'|| v_subpartition.currency || ' ADD SUBPARTITION subpart' || v_subpartition.currency ||
+                v_subpartition.year ||' VALUES (' || v_subpartition.year || ') location ('''||v_File ||'''))';
+
+				EXECUTE immediate (v_Sql); 
+            end loop;
+    end if;
+end if;
+end;
+/
